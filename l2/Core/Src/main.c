@@ -47,10 +47,32 @@ UART_HandleTypeDef hlpuart1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
 
 /* USER CODE BEGIN PV */
+uint16_t ADCRead[10]={0};
+uint16_t ADC;
+typedef struct
+{
+	// for record New / Old value to calculate dx / dt
+	uint32_t Position[2];
+	uint64_t TimeStamp[2];
 
+	float QEIPostion_1turn;
+	float QEIAngularVelocity;
+}QEI_StructureTypeDef;
+QEI_StructureTypeDef QEIdata = {0};
+enum
+{
+	NEW,OLD
+};
+uint64_t TimeValue;
+uint32_t currentTimerValue;
+uint32_t currentOverflowCnt;
+uint32_t microsOverflowCnt;
+float setpoint;
+float position;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -62,8 +84,10 @@ static void MX_ADC1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM5_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
-
+uint64_t micros();
+void QEIEncoderPosVel_Update();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -105,8 +129,12 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM3_Init();
   MX_TIM5_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-
+  HAL_ADC_Start_DMA(&hadc1, ADCRead, 10);
+  HAL_TIM_Base_Start(&htim4);
+  HAL_TIM_Encoder_Start(&htim3,TIM_CHANNEL_ALL);
+  HAL_TIM_Base_Start_IT(&htim5);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -116,6 +144,19 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  if(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin)){
+		  ADC = ADCRead[0];
+		  setpoint = (ADC/4095.0)*360.0;
+	  }
+	  static uint64_t timestamp =0;
+	  int64_t currentTime = micros();
+	  if(currentTime > timestamp)
+	  {
+		  timestamp = currentTime + 100000;//us
+		  QEIEncoderPosVel_Update();
+		  position = (QEIdata.QEIPostion_1turn/3072.0)*360.0;
+	  }
+
   }
   /* USER CODE END 3 */
 }
@@ -198,9 +239,9 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.NbrOfConversion = 1;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
-  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIG_T4_TRGO;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
   hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
   hadc1.Init.OversamplingMode = DISABLE;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
@@ -413,6 +454,51 @@ static void MX_TIM3_Init(void)
 }
 
 /**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 16999;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 19999;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
   * @brief TIM5 Initialization Function
   * @param None
   * @retval None
@@ -516,7 +602,62 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+//MicroSecondTimer Implement
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	if(htim == &htim5)
+	{
+		microsOverflowCnt++;
+	}
+}
+uint64_t micros()
+{
+	// Disable interrupts temporarily
+	__disable_irq();
+	//read timer and overflow counter
+	currentTimerValue = __HAL_TIM_GET_COUNTER(&htim5);
+	currentOverflowCnt = microsOverflowCnt;
+	// Check for overflow during the read
+	if (__HAL_TIM_GET_FLAG(&htim5, TIM_FLAG_UPDATE))
+	{
+	currentTimerValue = __HAL_TIM_GET_COUNTER(&htim5);
+	currentOverflowCnt++;
+	}
+	__enable_irq();
 
+	TimeValue = (4294967295*(currentOverflowCnt-1))+currentTimerValue;
+	return TimeValue;
+}
+
+void QEIEncoderPosVel_Update()
+{
+	//collect data
+	QEIdata.TimeStamp[NEW] = micros();
+	QEIdata.Position[NEW] = __HAL_TIM_GET_COUNTER(&htim3);
+
+	//Postion 1 turn calculation
+	QEIdata.QEIPostion_1turn = QEIdata.Position[NEW] % 3072;
+
+	//calculate dx
+	int32_t diffPosition = QEIdata.Position[NEW] - QEIdata.Position[OLD];
+
+	//Handle Warp around
+	if(diffPosition > 32256)
+		diffPosition -=64512;
+	if(diffPosition < -32256)
+		diffPosition +=64512;
+
+	//calculate dt
+	float diffTime = (QEIdata.TimeStamp[NEW]-QEIdata.TimeStamp[OLD]) * 0.000001;
+
+	//calculate anglar velocity
+	QEIdata.QEIAngularVelocity = diffPosition / diffTime;
+
+	//store value for next loop
+	QEIdata.Position[OLD] = QEIdata.Position[NEW];
+	QEIdata.TimeStamp[OLD]=QEIdata.TimeStamp[NEW];
+
+}
 /* USER CODE END 4 */
 
 /**
