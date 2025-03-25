@@ -71,8 +71,10 @@ uint64_t TimeValue;
 uint32_t currentTimerValue;
 uint32_t currentOverflowCnt;
 uint32_t microsOverflowCnt;
-float setpoint;
-float position;
+float setpoint = 0;
+float position = 0;
+arm_pid_instance_f32 PID = {0};
+float Vfeedback = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -135,6 +137,13 @@ int main(void)
   HAL_TIM_Base_Start(&htim4);
   HAL_TIM_Encoder_Start(&htim3,TIM_CHANNEL_ALL);
   HAL_TIM_Base_Start_IT(&htim5);
+  HAL_TIM_Base_Start(&htim1);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+  PID.Kp = 0.1;
+  PID.Ki = 0.00001;
+  PID.Kd = 0.1;
+  arm_pid_init_f32(&PID, 0);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -152,11 +161,12 @@ int main(void)
 	  int64_t currentTime = micros();
 	  if(currentTime > timestamp)
 	  {
-		  timestamp = currentTime + 100000;//us
+		  timestamp =currentTime + 1000;
 		  QEIEncoderPosVel_Update();
 		  position = (QEIdata.QEIPostion_1turn/3072.0)*360.0;
-	  }
+		  Vfeedback = arm_pid_f32(&PID, setpoint - position);
 
+	  }
   }
   /* USER CODE END 3 */
 }
@@ -345,7 +355,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 169;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 3071;
+  htim1.Init.Period = 199;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -370,7 +380,7 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
+  sConfigOC.Pulse = 3072;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
@@ -472,9 +482,9 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 16999;
+  htim4.Init.Prescaler = 169;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 19999;
+  htim4.Init.Period = 999;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
