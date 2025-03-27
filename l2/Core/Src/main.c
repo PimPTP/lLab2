@@ -74,7 +74,7 @@ uint32_t microsOverflowCnt;
 float setpoint = 0;
 float position = 0;
 arm_pid_instance_f32 PID = {0};
-float Vfeedback = 0;
+float PWM = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -141,8 +141,8 @@ int main(void)
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
   PID.Kp = 0.1;
-  PID.Ki = 0.00001;
-  PID.Kd = 0.1;
+  PID.Ki = 0;
+  PID.Kd = 5.0;
   arm_pid_init_f32(&PID, 0);
   /* USER CODE END 2 */
 
@@ -153,19 +153,20 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  if(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin)){
+	  if(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin))
+	  {
 		  ADC = ADCRead[0];
 		  setpoint = (ADC/4095.0)*360.0;
 	  }
-	  static uint64_t timestamp =0;
+	  static uint64_t timestamp = 0;
 	  int64_t currentTime = micros();
 	  if(currentTime > timestamp)
 	  {
-		  timestamp =currentTime + 1000;
+		  timestamp = currentTime + 1000;
 		  QEIEncoderPosVel_Update();
 		  position = (QEIdata.QEIPostion_1turn/3072.0)*360.0;
-		  Vfeedback = arm_pid_f32(&PID, setpoint - position);
-
+		  PWM = arm_pid_f32(&PID, setpoint - position);
+		  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PWM*100);
 	  }
   }
   /* USER CODE END 3 */
@@ -484,7 +485,7 @@ static void MX_TIM4_Init(void)
   htim4.Instance = TIM4;
   htim4.Init.Prescaler = 169;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 999;
+  htim4.Init.Period = 9999;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
